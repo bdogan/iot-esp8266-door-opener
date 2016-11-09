@@ -22,14 +22,14 @@
 const int RELAY_PORT = D3;
 const int STATUS_LED = LED_BUILTIN;
 const int WEB_SERVER_PORT = 9292;
-const char* MQTT_SERVER = "192.168.10.2";
-const char* MQTT_NODE = "eps8266-door-1";
-const char* MQTT_USER = "node1";
-const char* MQTT_PASS = "node1";
+const char* MQTT_SERVER = "iot.burak-dogan.com";
+char MQTT_NODE[19];
+const char* MQTT_USER = "iotuser";
+const char* MQTT_PASS = "BUR@k111";
 //const char* WIFI_SSID = "PlatinMarket Private";
-const char* WIFI_SSID = "IOT";
+const char* WIFI_SSID = "Dogan's Wi-Fi";
 //const char* WIFI_PASSWORD = "PGAJ6ZAKVPKE";
-const char* WIFI_PASSWORD = "1024603062A";
+const char* WIFI_PASSWORD = "BUR@k111";
 
 // Variables
 bool opening = false;
@@ -58,6 +58,25 @@ void connectWifi() {
   digitalWrite(STATUS_LED, HIGH);
 }
 
+//MQTT callback
+void callback(char* topic, byte* payload, unsigned int length) {
+
+	//convert topic to string to make it easier to work with
+	String topicStr = topic;
+
+	//this is a fix because the payload passed to the callback isn't null terminated
+	//so we create a new string with a null termination and then turn that into a string
+	char payloadFixed[100];
+	memcpy(payloadFixed, payload, length);
+	payloadFixed[length] = '\0';
+	String payloadStr = (char*)payloadFixed;
+
+	char byteToSend = 0;
+
+  Serial.println("Topic came:" + topicStr);
+  Serial.println(payloadStr);
+}
+
 /*
  * Make MQTT Server connection
  */
@@ -65,10 +84,11 @@ void connectMQTT() {
   while (!pClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (pClient.connect(MQTT_NODE)) {
+    if (pClient.connect(MQTT_NODE, MQTT_USER, MQTT_PASS)) {
       Serial.println("connected");
       // ... and subscribe to topic
-      pClient.subscribe("ledStatus");
+      pClient.setCallback(callback);
+      pClient.subscribe("/house/door1");
     } else {
       Serial.print("failed, rc=");
       Serial.print(pClient.state());
@@ -115,6 +135,16 @@ void webIndex() {
   webServer.send(200, "text/plain", "Hello World");
 }
 
+//generate unique name from MAC addr
+String macToStr(const uint8_t* mac){
+  String result;
+  for (int i = 0; i < 6; ++i) {
+    result += String(mac[i], 16);
+  }
+  result.toUpperCase();
+  return result;
+}
+
 /*
  * Setup
  */
@@ -139,9 +169,15 @@ void setup(){
 
   // Connect Wifi
   Wifi.mode(WIFI_STA);
+  uint8_t mac[WL_MAC_ADDR_LENGTH];
+  Wifi.macAddress(mac);
   Wifi.setAutoConnect(true);
   Wifi.begin(WIFI_SSID, WIFI_PASSWORD);
   connectWifi();
+
+  String macAddress = "ESP8266-" + macToStr(mac);
+  memset(MQTT_NODE, 0, macAddress.length() + 1);
+  for (int i=0; i < macAddress.length(); i++) MQTT_NODE[i] = macAddress.charAt(i);
 
   // Set web server callbacks
   webServer.on("/open", webOpenDoor);
@@ -156,7 +192,7 @@ void setup(){
   }
 
   // MQTT Client
-  pClient.setServer(MQTT_SERVER, 1883);
+  pClient.setServer(MQTT_SERVER, 8883);
 
   connectMQTT();
 
@@ -174,6 +210,12 @@ void loop() {
 
   // Handle Web Request
   webServer.handleClient();
+
+  if (!pClient.connected()) {
+    connectMQTT();
+  }
+
+  pClient.loop();
 
   delay(500);
 }
